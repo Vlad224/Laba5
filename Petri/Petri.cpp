@@ -1,6 +1,10 @@
 #include"Petri.h"
 namespace Prog5 {
 	int ID = 0;
+	std::atomic<bool> que_flag{ false };
+	std::atomic<bool> main_flag{ false };
+	std::atomic<bool> wait{ false };
+	std::atomic<bool> stop_flag{ false };
 	Petri::Petri(int size_position, int size_transition)
 	{
 		for (int i = 0; i < size_position; i++) {
@@ -31,26 +35,36 @@ namespace Prog5 {
 		for (int i = 0; i < count; i++)
 			marker.push_back(Marker(pid));
 	}
-	void Petri::ActiveTransition(int trans_id) {
+	void Petri::ActiveTransition(int trans_id, ofstream& file) {
+		std::unique_lock<std::mutex> lk(lock_activ);
+		while (wait)
+			activate.wait(lk);
+		vector<std::thread> thr;
 		vector<int> marker_transport;
 		vector<int> check_marker;
 		int count=0;
 		std::random_device rd;
 		std::mt19937 gen(rd());
-		std::normal_distribution<float> d(50, 25);
-		for (int i = 0; i < position.size(); i++)
+		std::normal_distribution<float> d(500, 250);
+		for (int i = 0; i < transition[trans_id].position_entrance.size(); i++)
 			if (transition[trans_id].position_entrance[i] > 0) {
 				check_marker.clear();
+				lock_marker.lock();
 				for (int j = 0; j < marker.size(); j++) {
 					if (marker[j].Position == i)
-						check_marker.push_back(j);
+						check_marker.push_back(marker[j].id);
 				}
+				lock_marker.unlock();
+				//std::this_thread::sleep_for(10ms);
 				if (check_marker.size() > transition[trans_id].position_entrance[i]) {
 					vector<int> need_marker;
+					lock_marker.lock();
 					for (int k = 0; k < marker_q.size(); k++)
 						for (int m = 0; m < check_marker.size(); m++)
-							if (marker_q[k] == check_marker[m])
-								need_marker.push_back(marker_q[k]);
+							if (marker[marker_q[k]].id == check_marker[m])
+								need_marker.push_back(check_marker[m]);
+					lock_marker.unlock();
+					//std::this_thread::sleep_for(10ms);
 					while (need_marker.size() > transition[trans_id].position_entrance[i])
 						need_marker.erase(need_marker.end() - 1);
 					if (need_marker.size() < transition[trans_id].position_entrance[i])
@@ -64,139 +78,203 @@ namespace Prog5 {
 							if (!flag)
 								need_marker.push_back(check_marker[k]);
 						}
-					for (int j = 0; j < need_marker.size(); j++)
-						marker_transport.push_back(need_marker[j]);
+					for (auto v = need_marker.begin(); v != need_marker.end(); ++v)
+						marker_transport.push_back((*v));
 					need_marker.clear();
 				}
 				else
-					for (int j = 0; j < check_marker.size(); j++)
-						marker_transport.push_back(check_marker[j]);
+					for (auto v = check_marker.begin(); v != check_marker.end(); ++v)
+						marker_transport.push_back((*v));
 			}
 		count = 0;
-		for (int i = 0; i < position.size(); i++)
+		for (int i = 0; i < transition[trans_id].position_exit.size(); i++)
 			count += transition[trans_id].position_exit[i];
+		lock_marker.lock();
 		while (marker_transport.size() > count)
 		{
-			lock_marker.lock();
-			marker.erase(marker.begin() + marker_transport[0]);
+			int found = -1;
+			std::string str(std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - Timer).count()));
+			str += "ms";
+			file << "Time: " << str << " | " << " Marker " << marker_transport[0]<< ": deleted " << std::endl;
+			for(int i=0;i<marker.size();i++)
+				if (marker_transport[0] == marker[i].id)
+				{
+					found = i;
+					break;
+				}
+			position[marker[found].Position].markers--;
 			for (int i = 0; i < marker_q.size(); i++)
-				if (marker_q[i] == marker_transport[0])
+				if (marker_q[i] == found)
 				{
 					marker_q.erase(marker_q.begin() + i);
 					break;
 				}
+			for (int i = 0; i < marker_q.size(); i++)
+				if (marker_q[i] > found)
+					marker_q[i]--;
+			marker.erase(marker.begin() + found);
 			marker_transport.erase(marker_transport.begin());
-			lock_marker.unlock();
 		}
 		while (marker_transport.size()<count)
 		{
-			lock_marker.lock();
+			std::string str(std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - Timer).count()));
+			str += "ms";
 			marker.push_back(Marker(0));
-			marker_transport.push_back(marker.size() - 1);
+			file << "Time: " << str << " | " << " Marker " << marker[marker.size() - 1].id << ": created " << std::endl;
+			marker_transport.push_back(marker[marker.size()-1].id);
 			position[0].markers++;
-			lock_marker.unlock();
 		}
-		for (int i = 0; i < position.size(); i++)
+		lock_marker.unlock();
+		for (int i = 0; i < transition[trans_id].position_exit.size(); i++)
 			if (transition[trans_id].position_exit[i] > 0) {
 				count = transition[trans_id].position_exit[i];
+				lock_marker.lock();
 				while (count > 0)
 				{
-					lock_marker.lock();
-					position[marker[marker_transport[0]].Position].markers--;
-					marker[marker_transport[0]].Position = i;
-					marker[marker_transport[0]].Ready = false;
+					int found = -1;
+					for (int i = 0; i < marker.size(); i++)
+						if (marker_transport[0] == marker[i].id)
+						{
+							found = i;
+							break;
+						}
+					std::string str(std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - Timer).count()));
+					str += "ms";
+					file << "Time: " << str << " | " << " Marker " << marker_transport[0]<< ": moved from " << marker[found].Position << " to " << i << " | use transition "<< trans_id << std::endl;
+					std::cout << "Time: " << str << std::endl;
+					position[marker[found].Position].markers--;
+					marker[found].Position = i;
 					position[i].markers++;
-					marker[marker_transport[0]].Timer = std::chrono::system_clock::now();
-					marker[marker_transport[0]].Current_Duration = std::chrono::milliseconds(int(d(gen)) % 100);
+					marker[found].Timer = std::chrono::system_clock::now();
+					marker[found].Current_Duration = std::chrono::milliseconds(int(d(gen)) % 1000);
 					for (int k = 0; k < marker_q.size(); k++)
-						if (marker_q[k] == marker_transport[0]) {
+						if (marker[marker_q[k]].id == marker_transport[0]) {
 							marker_q.erase(marker_q.begin() + k);
 							break;
 						}
 					marker_transport.erase(marker_transport.begin());
-					lock_marker.unlock();
 					count--;
+					
 				}
+				lock_marker.unlock();
 			}
-		
 	}
-	void Petri::MainFunc() {
-		vector<std::thread> thr;
+	void Petri::MainFunc(ofstream& file) {
 		vector<int> transition_use;
-		while (!stop_flag && marker.size()> 0 &&marker.size()<1000 && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - Timer).count() <= std::chrono::duration_cast<std::chrono::milliseconds>(Current_Duration).count()) {
+		while (!stop_flag && marker.size() > 0 && marker.size() < 1000 && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - Timer).count() <= std::chrono::duration_cast<std::chrono::milliseconds>(Current_Duration).count()) {
+			std::this_thread::sleep_for(100ms);
 			std::unique_lock<std::mutex> lk(lock);
-			not_full.wait(lk);
-			UpdateTransitions();
-			int thread_use = 1;
+			vector<std::thread> thr;
+			while (!que_flag)
+				not_full.wait(lk);
+			main_flag = true;
+			int thread_use = 3;
 			transition_use.clear();
+			wait = true;
+			UpdateTransitions(file);
 			lock_marker.lock();
-			for(auto i = marker_q.begin(); i != marker_q.end() && thread_use != std::thread::hardware_concurrency() ;i++)
+			for(auto i = marker_q.begin(); i != marker_q.end() && thread_use < std::thread::hardware_concurrency() ;i++)
 				if (marker[(*i)].AvailibleTransitions.size()>0 && transition_use.size()==0) {
-					thr.push_back(std::thread(&Petri::ActiveTransition, std::ref(*this), marker[(*i)].AvailibleTransitions[rand() % marker[(*i)].AvailibleTransitions.size()]));
+					thr.push_back(std::thread(&Petri::ActiveTransition, ref(*this), marker[(*i)].AvailibleTransitions[rand() % marker[(*i)].AvailibleTransitions.size()], std::ref(file)));
 					transition_use = marker[(*i)].AvailibleTransitions;
 					thread_use++;
 				}
 				else
 				{
-					bool flag = false;
-					for (int k = 0; k < transition_use.size(); k++) {
-						for (int j = 0; j < marker[(*i)].AvailibleTransitions.size(); j++)
-						{
-							int check1 = transition_use[k];
-							int check2 = marker[(*i)].AvailibleTransitions[j];
-							if (check1 == check2) {
-								flag = true;
-								break;
+					if (marker[(*i)].AvailibleTransitions.size() > 0) {
+						bool flag = false;
+						for (int k = 0; k < transition_use.size(); k++) {
+							for (int j = 0; j < marker[(*i)].AvailibleTransitions.size(); j++)
+							{
+								int check1 = transition_use[k];
+								int check2 = marker[(*i)].AvailibleTransitions[j];
+								if (check1 == check2) {
+									flag = true;
+									break;
+								}
 							}
+							if (flag)
+								break;
 						}
-						if (flag)
-							break;
-					}
-					if (!flag)
-					{
-						thr.push_back(std::thread(&Petri::ActiveTransition, std::ref(*this), marker[(*i)].AvailibleTransitions[rand() % marker[(*i)].AvailibleTransitions.size()]));
-						for (auto v = marker[(*i)].AvailibleTransitions.begin(); v != marker[(*i)].AvailibleTransitions.end(); v++)
-							transition_use.push_back((*v));
-						thread_use++;
+						if (!flag)
+						{
+							thr.push_back(std::thread(&Petri::ActiveTransition, ref(*this), marker[(*i)].AvailibleTransitions[rand() % marker[(*i)].AvailibleTransitions.size()], std::ref(file)));
+							for (auto v = marker[(*i)].AvailibleTransitions.begin(); v != marker[(*i)].AvailibleTransitions.end(); v++)
+								transition_use.push_back((*v));
+							thread_use++;
+						}
 					}
 				}
 			lock_marker.unlock();
-			if (transition_use.size() == 0)
+			if (transition_use.size() == 0) {
 				stop_flag = true;
+				break;
+			}
+			main_flag = false;
+			que.notify_one();
+			wait = false;
+			activate.notify_all();
 			for (auto& t : thr)
 				t.join();
 			thr.clear();
+			std::this_thread::sleep_for(100ms);
 		}
-		if (marker.size() >= 1000)
-			std::cout << "The Petri net is stopped because there are more than 1000 markers in the network" << std::endl;
-		if(stop_flag)
-			std::cout<< "The Petri net is stopped and all markers are blocked." << std::endl;
-		if(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - Timer).count() > std::chrono::duration_cast<std::chrono::milliseconds>(Current_Duration).count())
+		if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - Timer).count() > std::chrono::duration_cast<std::chrono::milliseconds>(Current_Duration).count()) {
 			std::cout << "Time out." << std::endl;
+			return;
+		}
+		if (marker.size() >= 1000) {
+			std::cout << "The Petri net is stopped because there are more than 1000 markers in the network" << std::endl;
+			return;
+		}
+		if (stop_flag) {
+			std::cout << "The Petri net is stopped and all markers are blocked." << std::endl;
+			return;
+		}
 	}
 
-		void Petri::UpdateMarker() {
+	void Petri::UpdateMarker()
+	{
 		while (!stop_flag && marker.size() > 0 && marker.size() < 1000 && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - Timer).count() <= std::chrono::duration_cast<std::chrono::milliseconds>(Current_Duration).count()) {
+			std::unique_lock<std::mutex> lk(lock_que);
+			while (main_flag)
+				que.wait(lk);
 			int i = 0;
+			bool flag = false;
+			que_flag = false;
+			bool flag_update = false;
+			lock_marker.lock();
 			while (i < marker.size()) {
-				if (marker[i].Ready == true) {
-					i++;
-					continue;
-				}
-				lock_marker.lock();
-				if (std::chrono::milliseconds((std::chrono::system_clock::now() - marker[i].Timer).count()) >= std::chrono::milliseconds(marker[i].Current_Duration.count())) {
+				flag = false;
+				for (int k = 0; k < marker_q.size(); k++)
+					if (marker_q[k] == i) {
+						flag = true;
+						continue;
+					}
+				if (!flag && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - marker[i].Timer).count() >= std::chrono::duration_cast<std::chrono::milliseconds>(marker[i].Current_Duration).count()) {
 					marker_q.push_back(i);
-					marker[i].Ready = true;
+					flag_update = true;
 				}
 				i++;
-				lock_marker.unlock();
 			}
+			int a = marker_q.size();
+			/*
+			if(flag_update)
+				UpdateTransitions();
+			*/
+			lock_marker.unlock();
+			if (a > 0)
+				que_flag = true;
 			not_full.notify_one();
+			std::this_thread::sleep_for(100ms);
 		}
+		que_flag = true;
+		not_full.notify_one();
 	}
 
-	void Petri::UpdateTransitions() {
+	void Petri::UpdateTransitions(ofstream& file) {
 		bool flag;
+		lock_marker.lock();
 		for (int i = 0; i < marker.size(); i++) {
 			marker[i].AvailibleTransitions.clear();
 		}
@@ -212,31 +290,42 @@ namespace Prog5 {
 							flag = true;
 							break;
 						}
-					if (!flag)
+					if (!flag && marker_q[i] < marker.size()) {
 						marker[marker_q[i]].AvailibleTransitions.push_back(k);
+					}
 				}
 			}
+			if (marker[marker_q[i]].AvailibleTransitions.size() == 0) {
+				std::string str(std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - Timer).count()));
+				str += "ms";
+				file << "Time: " << str << " | " << " Marker " << marker[marker_q[i]].id << ": blocked " << std::endl;
+			}
+
 		}
+		lock_marker.unlock();
 
 	}
 
 
-	void Petri::Start(int s) {
+	void Petri::Start(int s, ofstream& file) {
 		std::random_device rd;
 		std::mt19937 gen(rd());
-		std::normal_distribution<float> d(50, 25);
+		std::normal_distribution<float> d(500, 250);
+		stop_flag = false;
+		que_flag = false;
+		main_flag = false;
 		for (std::vector<Marker>::iterator it = marker.begin(); it != marker.end(); it++) {
 			it->Timer = std::chrono::system_clock::now();
-			it->Current_Duration = std::chrono::milliseconds(int(d(gen)) % 100);
+			it->Current_Duration = std::chrono::milliseconds(int(d(gen)) % 1000);
 		}
 		Current_Duration = std::chrono::seconds(s);
 		Timer = std::chrono::system_clock::now();
-		std::thread MainThread(&Petri::MainFunc, this);
-		std::thread UpdateThread(&Petri::UpdateMarker, this);
+		std::thread MainThread(&Petri::MainFunc, ref(*this), std::ref(file));
+		std::thread UpdateThread(&Petri::UpdateMarker, ref(*this));
 		MainThread.join();
 		UpdateThread.join();
 	}
-	Marker::Marker(int pl):id(ID), Position(pl), Ready(false) {
+	Marker::Marker(int pl):id(ID), Position(pl) {
 		ID++;
 	}
 }

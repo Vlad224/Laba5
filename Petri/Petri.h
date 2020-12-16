@@ -9,7 +9,9 @@
 #include<thread>
 #include <chrono>
 #include <mutex>
+#include<string>
 #include <atomic>
+#include<fstream>
 using namespace std;
 namespace Prog5 {
 	struct Transition
@@ -26,7 +28,6 @@ namespace Prog5 {
 	struct Marker {
 		int id;
 		int Position;
-		bool Ready;
 		vector<int> AvailibleTransitions;
 		std::chrono::milliseconds Current_Duration;
 		std::chrono::time_point<std::chrono::system_clock> Timer;
@@ -38,11 +39,13 @@ namespace Prog5 {
 		vector<Transition> transition;
 		vector<Marker> marker;
 		vector<int> marker_q;
-		std::atomic<bool> stop_flag{ false };
 		std::mutex lock;
 		std::mutex lock_marker;
+		std::mutex lock_activ;
+		std::mutex lock_que;
 		std::condition_variable not_full;
 		std::condition_variable que;
+		std::condition_variable activate;
 		std::chrono::milliseconds Current_Duration;
 		std::chrono::time_point<std::chrono::system_clock> Timer;
 	public:
@@ -50,11 +53,11 @@ namespace Prog5 {
 		void ConnectPT(int pid, int tid, int count = 1);
 		void ConnectTP(int tid, int pid, int count = 1);
 		void AddMarker(int pid, int count = 1);
-		void MainFunc();
+		void MainFunc(ofstream& file);
 		void UpdateMarker();
-		void UpdateTransitions();
-		void ActiveTransition(int i);
-		void Start(int s);
+		void UpdateTransitions(ofstream& file);
+		void ActiveTransition(int i, ofstream& file);
+		void Start(int s,ofstream& file);
 	};
 }
 #endif // !_PETRI_H_

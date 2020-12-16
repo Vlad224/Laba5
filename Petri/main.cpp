@@ -1,14 +1,14 @@
 #include"dialog.h"
 using namespace Prog5;
 int main() {
-	void(*dp[10])(Petri & oc) = { nullptr, ConnectPT,ConnectTP,AddMarker,Start };
+	void(*dp[10])(Petri & oc) = { nullptr, ConnectPT,ConnectTP,AddMarker,Start,CheckInfo };
 	int tid_count;
 	int pid_count;
 	bool flag = true;
 	do {
 		std::cout << "Enter Amount Transition: ";
 		std::cin >> tid_count;
-		std::cout << "Enter Amount Platform: ";
+		std::cout << "Enter Amount Position: ";
 		std::cin >> pid_count;
 		if (!std::cin.good()) {
 			std::cin.clear();
@@ -25,7 +25,7 @@ int main() {
 	while (fl1) {
 		menu();
 		std::cin >> c;
-		if (!std::cin.good() || c < 0 || c > 9) {
+		if (!std::cin.good() || c < 0 || c > 6) {
 
 			std::cin.clear();
 

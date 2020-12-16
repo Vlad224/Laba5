@@ -6,4 +6,5 @@ namespace Prog5 {
 	void ConnectTP(Petri& oc);
 	void AddMarker(Petri& oc);
 	void Start(Petri& oc);
+	void CheckInfo(Petri& oc);
 }
